@@ -1,4 +1,4 @@
-"""Portal de solicitudes de clientes — Paso 4: conversación guiada hasta completar la solicitud.
+"""Portal de solicitudes de clientes — Paso 5: mejoras a partir de la prueba (saludos y velocidad).
 
 El cliente describe su problema con sus palabras y la IA devuelve:
 tipo, severidad, equipo, un resumen y qué datos faltan.
@@ -6,6 +6,7 @@ Proveedores: Gemini (principal) -> Claude (fallback). Las claves van en st.secre
 """
 
 import json
+import time
 
 import streamlit as st
 
@@ -23,15 +24,20 @@ Respondé SOLO con un JSON válido, sin texto extra ni ```, con esta forma exact
   "severidad": "Crítica" | "Alta" | "Media" | "Baja",
   "equipo": "Plataforma" | "Agentes e IA" | "Integraciones" | "Reportes" | "Comercial",
   "resumen": "una frase de máximo 20 palabras",
-  "faltantes": ["dato que falta para poder actuar", "..."]
+  "faltantes": ["dato que falta para poder actuar", "..."],
+  "es_solicitud": true | false,
+  "mensaje_al_cliente": "lo que le respondemos al cliente, en 1 o 2 frases"
 }}
 
 Reglas:
 - Severidad Crítica solo si el servicio está caído o afecta a todos los usuarios finales.
 - En "faltantes" poné solo lo imprescindible (por ejemplo: desde cuándo pasa,
   qué agente o bot, un ejemplo concreto, impacto). Lista vacía si no falta nada.
-- Si el texto no es una solicitud (saludo, texto sin sentido), usá tipo "Consulta",
-  severidad "Baja" y en faltantes pedí que describa el problema.
+- "es_solicitud" es false si el texto es solo un saludo, un agradecimiento o no tiene sentido.
+- "mensaje_al_cliente": tono cercano, en español rioplatense, hablándole de vos.
+  Si es_solicitud es false: saludá y pedile que cuente qué problema tiene o qué cambio necesita.
+  Si faltan datos: mostrá que entendiste y preguntá lo que falta en una sola pregunta natural.
+  Si no falta nada: confirmá en una frase que la solicitud queda registrada.
 
 Solicitud del cliente:
 \"\"\"{texto}\"\"\"
@@ -54,16 +60,31 @@ def consultar_ia(prompt: str) -> tuple[str, str]:
 
     if clave := leer_clave("GEMINI_API_KEY"):
         from google import genai
+        from google.genai import types
+
+        cliente = genai.Client(api_key=clave)
+        # Velocidad: pedimos JSON directo y poco "razonamiento" (clasificar es una tarea simple).
+        # Si esta versión del SDK o el modelo no aceptan la config, seguimos sin ella.
+        try:
+            rapido = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(thinking_level="low"),
+            )
+        except Exception:
+            rapido = types.GenerateContentConfig(response_mime_type="application/json")
 
         # Modelos del curso: si el principal da 429 (cuota) o 503, probamos el "lite"
         for modelo in ("gemini-3.8-flash", "gemini-3.5-flash-lite"):
-            try:
-                cliente = genai.Client(api_key=clave)
-                r = cliente.models.generate_content(model=modelo, contents=prompt)
-                if r.text:
-                    return r.text, f"Gemini ({modelo})"
-            except Exception as e:  # cuota agotada, clave inválida, red...
-                errores.append(f"{modelo}: {e}")
+            for config in (rapido, None):  # si la config da error de parámetro, reintento sin ella
+                try:
+                    r = cliente.models.generate_content(model=modelo, contents=prompt, config=config)
+                    if r.text:
+                        return r.text, f"Gemini ({modelo})"
+                    break
+                except Exception as e:  # cuota agotada, clave inválida, red...
+                    errores.append(f"{modelo}: {e}")
+                    if config is None or "400" not in str(e):
+                        break
 
     if clave := leer_clave("ANTHROPIC_API_KEY"):
         try:
@@ -84,7 +105,9 @@ def consultar_ia(prompt: str) -> tuple[str, str]:
 
 def clasificar(texto: str) -> tuple[dict, str]:
     """Clasifica la solicitud. Devuelve (clasificación, proveedor)."""
+    inicio = time.perf_counter()
     respuesta, proveedor = consultar_ia(PROMPT_CLASIFICACION.format(texto=texto))
+    proveedor += f" · {time.perf_counter() - inicio:.1f} s"
     limpio = respuesta.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
     return json.loads(limpio), proveedor
 
@@ -141,12 +164,19 @@ def procesar(mensaje: str):
                            "esperá un minuto y volvé a enviar el mensaje.")
         return
 
+    # Cambio a partir de la prueba: un saludo no es una solicitud.
+    # Respondemos amable, no gastamos una repregunta y no lo sumamos al relato.
+    if c.get("es_solicitud") is False:
+        st.session_state.relato = st.session_state.relato.rsplit("\n", 1)[0] if "\n" in st.session_state.relato else ""
+        decir("assistant", c.get("mensaje_al_cliente")
+              or "¡Hola! Contame qué problema tenés o qué cambio necesitás y te ayudo a registrarlo.")
+        return
+
     faltantes = c.get("faltantes") or []
     if faltantes and st.session_state.rondas < MAX_RONDAS:
         st.session_state.rondas += 1
-        decir("assistant",
-              f"Entendido: **{c.get('resumen', '')}**\n\n"
-              "Para que el equipo pueda resolverlo rápido, ¿me contás también…?\n\n"
+        decir("assistant", c.get("mensaje_al_cliente")
+              or "Para que el equipo pueda resolverlo rápido, ¿me contás también…?\n\n"
               + "\n".join(f"- {f}" for f in faltantes))
     else:
         crear_ticket(c, proveedor, incompleta=bool(faltantes))
