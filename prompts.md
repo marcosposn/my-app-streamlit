@@ -42,6 +42,16 @@ Prompt de la app (en `app.py`, `PROMPT_CLASIFICACION`), reutilizable para cualqu
 - **IA:** chat con `session_state`, reclasificación del relato acumulado y tope de 3 repreguntas para evitar un bucle infinito.
 - **Yo:** probé en la app desplegada con casos reales ("El bot no funciona, hace dos horas está el sistema caído").
 
+## 8. Prueba en la app desplegada y mejoras
+> "Probé el hola" (con captura) / "Me parece que la app no funciona muy bien"
+
+Hallazgos de la prueba, cada uno con su cambio:
+- "hola" se trataba como solicitud y gastaba una repregunta → campo `es_solicitud` y respuesta amable.
+- La IA inventaba acciones ("ya lo pasé al equipo", "estuve mirando tu caso") → reglas explícitas en el prompt.
+- Si el cliente escribía durante "Analizando…", se perdía la respuesta → chat bloqueado mientras responde.
+- Tardaba 25–30 s → mostramos modelo y segundos debajo de cada respuesta. **El dato mostró que `gemini-3.8-flash` se colgaba (20,1 s) y siempre respondía el lite (1,3 s)**, así que cambiamos el orden: lite primero.
+- Tono demasiado informal ("Che, qué bajón") → tono cordial y profesional.
+
 ## Qué delegué y qué revisé a mano
 | Delegué en la IA | Revisé / decidí yo |
 |---|---|
@@ -49,4 +59,5 @@ Prompt de la app (en `app.py`, `PROMPT_CLASIFICACION`), reutilizable para cualqu
 | Probar los flujos con la IA simulada | Ir paso a paso, y entender cada cambio antes de subirlo |
 | Redactar README, AGENTS.md y especificación | Que ninguna clave estuviera en el repo (revisión del código en GitHub) |
 | Proponer la cadena de fallback | Que lo de las claves coincidiera con el PDF y el Colab |
-| | Prueba en la app desplegada y capturas |
+| | Prueba en la app desplegada: detecté que "no funciona muy bien" y no di la app por buena hasta medir |
+| | Elegir el modelo con el dato medido, no con el que "debería" ser mejor |

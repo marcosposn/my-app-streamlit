@@ -28,7 +28,8 @@ Salida interna del modelo (JSON):
 
 ## 4. La pieza de IA
 - **LLM por API, sin RAG ni entrenamiento:** el problema es interpretar texto libre y razonar qué falta, no buscar en documentos. Un formulario fijo no detecta qué falta porque cada cliente lo cuenta distinto, y un clasificador zero-shot local no puede decir qué dato falta.
-- **Gemini 3.8 Flash** como principal (rápido, plan gratuito), **Gemini 3.5 Flash-Lite** si hay cuota agotada y **Claude Haiku 4.5** como respaldo de otro proveedor.
+- **Gemini 3.5 Flash-Lite** como principal, **Gemini 3.8 Flash** de respaldo y **Claude Haiku 4.5** como respaldo de otro proveedor. La elección se hizo con datos de la prueba: con Flash como principal las respuestas tardaban hasta 20–30 s porque el modelo fallaba o se colgaba, mientras que Flash-Lite respondía en 1–7 s con la misma calidad de clasificación.
+- Timeout de 12 s por modelo: si no responde, pasa al siguiente.
 - **Un solo prompt** reutilizable para todos los modelos, que exige respuesta en JSON.
 
 ## 5. Flujo del usuario
@@ -53,7 +54,9 @@ Salida interna del modelo (JSON):
 | 5 | **Caso límite:** el cliente no completa tras 3 repreguntas | Se registra igual, con el aviso "datos pendientes" |
 | 6 | **Caso límite:** mensaje de menos de 3 caracteres | Pide que escriba un poco más, sin llamar a la IA |
 | 7 | **Caso límite:** saludo o texto sin sentido ("hola") | Consulta / Baja, y pide que describa el problema |
-| 8 | **Error:** cuota de Gemini agotada (429) | Responde con Flash-Lite o con Claude, y lo indica abajo |
+| 8 | **Error:** cuota de Gemini agotada (429) o modelo colgado | Responde el siguiente modelo y lo indica debajo del mensaje |
+| 11 | **Caso límite:** el cliente escribe mientras la IA responde | El chat queda bloqueado ("Esperá la respuesta…"), no se pierde nada |
+| 12 | Solicitud incompleta | La IA repregunta sin decir que ya la registró ni que la pasó al equipo |
 | 9 | **Error:** ningún modelo disponible o sin claves | Mensaje claro, el texto no se pierde y la app no se cae |
 | 10 | **Error:** el modelo devuelve algo que no es JSON | Mensaje "probá de nuevo", la app no se cae |
 

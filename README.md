@@ -24,8 +24,9 @@ Una persona de una empresa cliente, sin perfil técnico, que necesita reportar u
 
 ## La pieza de IA
 
-- **Gemini** (`gemini-3.8-flash`) clasifica y detecta los datos que faltan, devolviendo un JSON.
-- Si se agota la cuota o falla, prueba con `gemini-3.5-flash-lite`; si también falla, con **Claude** (`claude-haiku-4-5`).
+- **Gemini** (`gemini-3.5-flash-lite`) clasifica, detecta los datos que faltan y redacta la respuesta al cliente, todo en un JSON y en una sola llamada.
+- Si falla o tarda más de 12 s, prueba con `gemini-3.8-flash`; si también falla, con **Claude** (`claude-haiku-4-5`).
+- Debajo de cada respuesta se ve qué modelo respondió y cuánto tardó.
 - Si no responde ningún modelo, la app muestra un mensaje claro y no se cae.
 
 ## Estructura
