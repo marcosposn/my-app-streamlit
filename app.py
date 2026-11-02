@@ -1,4 +1,4 @@
-"""Portal de solicitudes de clientes — Paso 6: mejoras a partir de la prueba (saludos, velocidad, no inventar acciones, chat bloqueado mientras responde).
+"""Portal de solicitudes de clientes — Paso 7: modelo principal elegido con datos de la prueba (flash-lite) y tono profesional.
 
 El cliente describe su problema con sus palabras y la IA devuelve:
 tipo, severidad, equipo, un resumen y qué datos faltan.
@@ -13,7 +13,7 @@ import streamlit as st
 st.set_page_config(page_title="Portal de solicitudes", page_icon="📨")
 
 # ---------------------------------------------------------------------------
-# 1. Prompt de clasificación (reutilizable: mismo texto para los dos modelos)
+# 1. Prompt de clasificación (reutilizable: mis mo texto para los dos modelos)
 # ---------------------------------------------------------------------------
 PROMPT_CLASIFICACION = """Sos un analista de soporte de una empresa de software que recibe
 solicitudes de clientes. Clasificá la solicitud del cliente.
@@ -34,7 +34,8 @@ Reglas:
 - En "faltantes" poné solo lo imprescindible (por ejemplo: desde cuándo pasa,
   qué agente o bot, un ejemplo concreto, impacto). Lista vacía si no falta nada.
 - "es_solicitud" es false si el texto es solo un saludo, un agradecimiento o no tiene sentido.
-- "mensaje_al_cliente": tono cercano, en español rioplatense, hablándole de vos.
+- "mensaje_al_cliente": tono cordial y profesional (le escribimos a un cliente de una empresa),
+  en español rioplatense, hablándole de vos. Sin expresiones muy informales como "che" o "qué bajón".
   Si es_solicitud es false: saludá y pedile que cuente qué problema tiene o qué cambio necesita.
   Si faltan datos: mostrá que entendiste y preguntá lo que falta en una sola pregunta natural.
   Si no falta nada: confirmá en una frase que la solicitud queda registrada.
@@ -67,9 +68,9 @@ def consultar_ia(prompt: str) -> tuple[str, str]:
         from google import genai
         from google.genai import types
 
-        # Si un modelo no responde en 20 s, pasamos al siguiente en vez de dejar al cliente esperando
+        # Si un modelo no responde en 12 s, pasamos al siguiente en vez de dejar al cliente esperando
         try:
-            cliente = genai.Client(api_key=clave, http_options=types.HttpOptions(timeout=20_000))
+            cliente = genai.Client(api_key=clave, http_options=types.HttpOptions(timeout=12_000))
         except Exception:
             cliente = genai.Client(api_key=clave)
         # Velocidad: pedimos JSON directo y poco "razonamiento" (clasificar es una tarea simple).
@@ -82,8 +83,10 @@ def consultar_ia(prompt: str) -> tuple[str, str]:
         except Exception:
             rapido = types.GenerateContentConfig(response_mime_type="application/json")
 
-        # Modelos del curso: si el principal da 429 (cuota) o 503, probamos el "lite"
-        for modelo in ("gemini-3.8-flash", "gemini-3.5-flash-lite"):
+        # Modelos del curso. Decisión tomada con datos de la prueba en la app desplegada:
+        # gemini-3.8-flash fallaba o se colgaba (hasta 20 s) y siempre terminaba respondiendo el lite
+        # en 1-7 s. Para clasificar alcanza con el lite: va primero y el flash queda de respaldo.
+        for modelo in ("gemini-3.5-flash-lite", "gemini-3.8-flash"):
             for config in (rapido, None):  # si la config da error de parámetro, reintento sin ella
                 try:
                     r = cliente.models.generate_content(model=modelo, contents=prompt, config=config)
