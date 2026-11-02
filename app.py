@@ -1,4 +1,4 @@
-"""Portal de solicitudes de clientes — Paso 5: mejoras a partir de la prueba (saludos y velocidad).
+"""Portal de solicitudes de clientes — Paso 6: mejoras a partir de la prueba (saludos, velocidad, no inventar acciones, chat bloqueado mientras responde).
 
 El cliente describe su problema con sus palabras y la IA devuelve:
 tipo, severidad, equipo, un resumen y qué datos faltan.
@@ -38,6 +38,11 @@ Reglas:
   Si es_solicitud es false: saludá y pedile que cuente qué problema tiene o qué cambio necesita.
   Si faltan datos: mostrá que entendiste y preguntá lo que falta en una sola pregunta natural.
   Si no falta nada: confirmá en una frase que la solicitud queda registrada.
+- No inventes acciones: nunca digas que revisaste algo, que lo pasaste al equipo o que ya
+  quedó registrado mientras todavía falten datos.
+- El texto puede tener varios mensajes del cliente (uno por línea): es una conversación en curso.
+  En ese caso no vuelvas a saludar.
+- Escribí sin errores de ortografía.
 
 Solicitud del cliente:
 \"\"\"{texto}\"\"\"
@@ -62,7 +67,11 @@ def consultar_ia(prompt: str) -> tuple[str, str]:
         from google import genai
         from google.genai import types
 
-        cliente = genai.Client(api_key=clave)
+        # Si un modelo no responde en 20 s, pasamos al siguiente en vez de dejar al cliente esperando
+        try:
+            cliente = genai.Client(api_key=clave, http_options=types.HttpOptions(timeout=20_000))
+        except Exception:
+            cliente = genai.Client(api_key=clave)
         # Velocidad: pedimos JSON directo y poco "razonamiento" (clasificar es una tarea simple).
         # Si esta versión del SDK o el modelo no aceptan la config, seguimos sin ella.
         try:
@@ -130,14 +139,15 @@ def reiniciar():
     st.session_state.relato = ""        # todo lo que contó el cliente, acumulado
     st.session_state.rondas = 0
     st.session_state.ticket = None
+    st.session_state.pendiente = None   # mensaje esperando respuesta de la IA
 
 
 if "mensajes" not in st.session_state:
     reiniciar()
 
 
-def decir(rol: str, texto: str):
-    st.session_state.mensajes.append({"role": rol, "content": texto})
+def decir(rol: str, texto: str, detalle: str = ""):
+    st.session_state.mensajes.append({"role": rol, "content": texto, "detalle": detalle})
 
 
 def crear_ticket(c: dict, proveedor: str, incompleta: bool):
@@ -148,20 +158,22 @@ def crear_ticket(c: dict, proveedor: str, incompleta: bool):
 
 
 def procesar(mensaje: str):
-    """Suma el mensaje al relato, reclasifica y decide: repreguntar o crear la solicitud."""
-    decir("user", mensaje)
+    """Suma el mensaje al relato, reclasifica y decide: repreguntar o crear la solicitud.
+    (El mensaje del usuario ya se mostró en el chat antes de llamar a esta función.)"""
     st.session_state.relato += ("\n" if st.session_state.relato else "") + mensaje
 
     try:
         c, proveedor = clasificar(st.session_state.relato)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RuntimeError) as e:
+        # Sacamos el mensaje del relato: si el cliente lo reenvía, no queda duplicado
+        st.session_state.relato = st.session_state.relato.rsplit("\n", 1)[0] if "\n" in st.session_state.relato else ""
+        if isinstance(e, RuntimeError):
+            decir("assistant", "⚠️ El asistente no está disponible en este momento "
+                               "(puede ser un límite de uso del servicio). Esperá un minuto "
+                               "y volvé a enviar el mensaje.")
+            return
         decir("assistant", "⚠️ No pude entender la respuesta del clasificador. "
                            "Probá enviar tu mensaje de nuevo en unos segundos.")
-        return
-    except RuntimeError:
-        decir("assistant", "⚠️ El asistente no está disponible en este momento "
-                           "(puede ser un límite de uso del servicio). Lo que escribiste no se perdió: "
-                           "esperá un minuto y volvé a enviar el mensaje.")
         return
 
     # Cambio a partir de la prueba: un saludo no es una solicitud.
@@ -169,7 +181,8 @@ def procesar(mensaje: str):
     if c.get("es_solicitud") is False:
         st.session_state.relato = st.session_state.relato.rsplit("\n", 1)[0] if "\n" in st.session_state.relato else ""
         decir("assistant", c.get("mensaje_al_cliente")
-              or "¡Hola! Contame qué problema tenés o qué cambio necesitás y te ayudo a registrarlo.")
+              or "¡Hola! Contame qué problema tenés o qué cambio necesitás y te ayudo a registrarlo.",
+              proveedor)
         return
 
     faltantes = c.get("faltantes") or []
@@ -177,10 +190,10 @@ def procesar(mensaje: str):
         st.session_state.rondas += 1
         decir("assistant", c.get("mensaje_al_cliente")
               or "Para que el equipo pueda resolverlo rápido, ¿me contás también…?\n\n"
-              + "\n".join(f"- {f}" for f in faltantes))
+              + "\n".join(f"- {f}" for f in faltantes), proveedor)
     else:
         crear_ticket(c, proveedor, incompleta=bool(faltantes))
-        decir("assistant", "¡Listo! Ya registré tu solicitud. Abajo tenés el detalle.")
+        decir("assistant", "¡Listo! Ya registré tu solicitud. Abajo tenés el detalle.", proveedor)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +213,8 @@ if not st.session_state.mensajes:
 for m in st.session_state.mensajes:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
+        if m.get("detalle"):
+            st.caption(m["detalle"])  # qué modelo respondió y cuánto tardó
 
 t = st.session_state.ticket
 if t:
@@ -216,13 +231,21 @@ if t:
     if st.button("Nueva solicitud"):
         reiniciar()
         st.rerun()
+elif st.session_state.get("pendiente"):
+    # Cambio a partir de la prueba: mientras la IA responde, el chat queda bloqueado.
+    # Antes, un mensaje enviado durante "Analizando…" reiniciaba el script y se perdía la respuesta.
+    st.chat_input("Esperá la respuesta…", disabled=True)
+    with st.spinner("Analizando tu mensaje… puede tardar unos segundos"):
+        procesar(st.session_state.pendiente)
+    st.session_state.pendiente = None
+    st.rerun()
 else:
     entrada = st.chat_input("Escribí tu solicitud o tu respuesta…")
-    mensaje = ejemplo or entrada
+    mensaje = (ejemplo or entrada or "").strip()
     if mensaje:
-        if len(mensaje.strip()) < 3:
+        decir("user", mensaje)  # se muestra enseguida
+        if len(mensaje) < 3:
             decir("assistant", "Escribí un poco más para que pueda entender qué necesitás.")
         else:
-            with st.spinner("Analizando…"):
-                procesar(mensaje.strip())
+            st.session_state.pendiente = mensaje  # la IA lo procesa en la próxima ejecución
         st.rerun()
