@@ -49,7 +49,7 @@ Hallazgos de la prueba, cada uno con su cambio:
 - "hola" se trataba como solicitud y gastaba una repregunta → campo `es_solicitud` y respuesta amable.
 - La IA inventaba acciones ("ya lo pasé al equipo", "estuve mirando tu caso") → reglas explícitas en el prompt.
 - Si el cliente escribía durante "Analizando…", se perdía la respuesta → chat bloqueado mientras responde.
-- Tardaba 25–30 s → mostramos modelo y segundos debajo de cada respuesta. **El dato mostró que `gemini-3.8-flash` se colgaba (20,1 s) y siempre respondía el lite (1,3 s)**, así que cambiamos el orden: lite primero.
+- Tardaba 25–30 s → mostramos modelo y segundos debajo de cada respuesta. **El dato mostró que `gemini-3.8-flash` se colgaba (20,1 s) y siempre respondía el lite (1,3 s)**, así que cambiamos el orden: lite primero. **Resultado: la misma conversación pasó de 20,1 s a 0,9–1,0 s por respuesta.**
 - Tono demasiado informal ("Che, qué bajón") → tono cordial y profesional.
 
 ## Qué delegué y qué revisé a mano

@@ -1,69 +1,83 @@
 # Especificación · Portal de solicitudes con IA
 
+> Una buena especificación es la que otro asistente de IA podría construir sin haceros preguntas. Esta es la versión final, actualizada con lo aprendido en la prueba.
+
 ## 1. Problema y usuario
-- **Quién tiene el problema:** una persona de una empresa cliente de una compañía de software (agentes conversacionales para clientes en Latinoamérica) que necesita reportar un problema o pedir un cambio. No tiene perfil técnico.
-- **Cómo lo resuelve hoy:** abre la solicitud en la web de un proveedor externo que no se puede personalizar. Escribe lo que puede, sin guía. Del lado interno, alguien lee cada solicitud, le pide por mail los datos que faltan, la clasifica y la pasa a mano al sistema interno (Azure DevOps). El cliente no ve en qué estado está.
-- **Qué le frustra:** idas y vueltas para completar datos, demora hasta que alguien la mira y no saber qué pasa con su pedido.
-- **Qué parte resuelve la IA:** entender el texto libre, detectar qué datos faltan, repreguntar y clasificar por tipo, severidad y equipo.
-- **Qué queda fuera:** resolver el problema, asignar a una persona concreta y la integración real con Azure DevOps (siguiente paso).
+
+- **Quién tiene el problema:** una persona de una empresa cliente de una compañía de software que desarrolla agentes conversacionales para clientes de Latinoamérica. Necesita reportar un problema (por ejemplo, un bot que no responde) o pedir un cambio, y no tiene perfil técnico.
+- **Cómo lo resuelve hoy:** abre la solicitud en la web de un proveedor externo que no se puede personalizar. Escribe lo que puede, sin guía. Del lado interno, alguien lee cada solicitud, le pide al cliente los datos que faltan, la clasifica y la pasa a mano al sistema interno (Azure DevOps).
+- **Qué le molesta de cómo lo hace hoy:** idas y vueltas para completar datos, demora hasta que alguien la mira, solicitudes mal clasificadas y no saber en qué estado está su pedido.
+- **Qué parte resuelve la IA:** entender el texto libre, detectar qué datos faltan, repreguntar de forma natural y clasificar por tipo, severidad y equipo. **Queda fuera:** resolver el problema técnico, asignarlo a una persona y abrir el ticket en una herramienta (en esta versión la solicitud no sale de la app).
 
 ## 2. Qué hace el producto
-1. Recibe la solicitud en lenguaje natural, en un chat.
-2. Clasifica: **tipo** (Incidente / Pedido de cambio / Consulta), **severidad** (Crítica / Alta / Media / Baja) y **equipo** (Plataforma / Agentes e IA / Integraciones / Reportes / Comercial), con un resumen de una frase.
-3. Si faltan datos imprescindibles, los pregunta (máximo 3 rondas).
-4. Registra la solicitud con un número y estado "Recibida", y la muestra al cliente.
+
+1. **Conversación guiada:** el cliente cuenta su problema con sus palabras (o toca un ejemplo) y, si falta algún dato imprescindible, el asistente se lo pregunta, como máximo 3 veces. Un saludo no cuenta como solicitud.
+2. **Clasificación automática:** tipo (Incidente / Pedido de cambio / Consulta), severidad (Crítica / Alta / Media / Baja), equipo (Plataforma / Agentes e IA / Integraciones / Reportes / Comercial) y resumen de una frase.
+3. **Ficha de la solicitud:** al completarse, muestra la ficha con número y estado. En esta versión el número y el estado existen solo en la sesión: la solicitud no se abre en ninguna herramienta de tickets.
 
 ## 3. Entradas y salidas
-| Entrada | Salida |
-|---|---|
-| Texto libre del cliente, por ejemplo "Desde esta mañana el bot de WhatsApp no responde a nadie" | Ficha: tipo, severidad, equipo, resumen y número de solicitud |
-| Texto incompleto, por ejemplo "No anda." | Repregunta con la lista de datos que faltan |
-| Respuesta del cliente a la repregunta | Reclasificación con todo el relato acumulado |
 
-Salida interna del modelo (JSON):
+| El usuario da… | La app devuelve… | Ejemplo |
+|---|---|---|
+| Un texto libre con su problema | La ficha clasificada | "El bot de WhatsApp de ventas no responde desde ayer a la tarde, a ningún cliente" → Incidente · Crítica · Agentes e IA · SOL-1089 |
+| Un texto incompleto | Una repregunta natural | "No anda." → "¿Podrías contarnos exactamente qué es lo que no anda y desde cuándo te pasa…?" |
+| La respuesta a la repregunta | Reclasificación con todo lo que contó | "El bot de WhatsApp de ventas no responde desde ayer" → ficha completa |
+| Un saludo | Respuesta amable que pide el problema | "hola" → "¡Hola! Contame, ¿en qué te podemos ayudar hoy…?" |
+
+Internamente, el modelo devuelve siempre este JSON:
+
 ```json
 {"tipo": "Incidente", "severidad": "Crítica", "equipo": "Agentes e IA",
- "resumen": "Bot de WhatsApp sin respuesta desde la mañana", "faltantes": []}
+ "resumen": "...", "faltantes": [], "es_solicitud": true, "mensaje_al_cliente": "..."}
 ```
 
 ## 4. La pieza de IA
-- **LLM por API, sin RAG ni entrenamiento:** el problema es interpretar texto libre y razonar qué falta, no buscar en documentos. Un formulario fijo no detecta qué falta porque cada cliente lo cuenta distinto, y un clasificador zero-shot local no puede decir qué dato falta.
-- **Gemini 3.5 Flash-Lite** como principal, **Gemini 3.8 Flash** de respaldo y **Claude Haiku 4.5** como respaldo de otro proveedor. La elección se hizo con datos de la prueba: con Flash como principal las respuestas tardaban hasta 20–30 s porque el modelo fallaba o se colgaba, mientras que Flash-Lite respondía en 1–7 s con la misma calidad de clasificación.
-- Timeout de 12 s por modelo: si no responde, pasa al siguiente.
-- **Un solo prompt** reutilizable para todos los modelos, que exige respuesta en JSON.
+
+- **Opción elegida:** API de un LLM: Gemini 3.5 Flash-Lite (principal) y Gemini 3.8 Flash (respaldo), con el SDK `google-genai`. Un tercer nivel con otro proveedor, Claude Haiku 4.5 (SDK `anthropic`), está preparado en el código pero no activado, porque su API es de pago.
+- **Por qué:** cada cliente describe su problema a su manera. Un formulario fijo no sabe qué falta en cada caso, y un clasificador zero-shot pone una etiqueta pero no razona qué dato falta ni redacta la repregunta. No hace falta RAG: no se responde desde documentos. Flash-Lite va primero porque en la prueba Flash se colgaba (20,1 s) y Flash-Lite respondía en 0,9–1,0 s con la misma calidad.
+- **Instrucciones para el modelo (system prompt):** "Sos un analista de soporte de una empresa de software que recibe solicitudes de clientes. Clasificá la solicitud del cliente. Respondé SOLO con un JSON válido […]. Severidad Crítica solo si el servicio está caído o afecta a todos los usuarios finales. En faltantes poné solo lo imprescindible. es_solicitud es false si el texto es solo un saludo o no tiene sentido. mensaje_al_cliente: tono cordial y profesional, en español rioplatense, sin expresiones muy informales; si faltan datos, preguntá lo que falta en una sola pregunta natural. No inventes acciones: nunca digas que revisaste algo, que lo pasaste al equipo o que ya quedó registrado mientras falten datos. Si hay varios mensajes, no vuelvas a saludar." (texto completo en `app.py`, constante `PROMPT_CLASIFICACION`).
 
 ## 5. Flujo del usuario
-1. Abre la app y ve 3 ejemplos.
-2. Escribe su solicitud o toca un ejemplo.
-3. Responde las preguntas del asistente, si las hay.
-4. Ve su solicitud registrada y puede empezar otra.
+
+1. El usuario entra y ve un chat con tres ejemplos: *Bot caído*, *Cambio* e *Incompleta*.
+2. Escribe su solicitud o toca un ejemplo. Mientras la IA responde, el chat queda bloqueado ("Esperá la respuesta…").
+3. Si falta algo, responde las preguntas del asistente. Al final recibe la ficha de su solicitud y puede empezar otra con **Nueva solicitud**.
 
 ## 6. Restricciones
-- Coste cero en el uso normal (plan gratuito de Gemini). Claude solo se usa si Gemini falla.
-- Claves solo en los Secrets de Streamlit.
-- Sin datos personales reales en los ejemplos.
-- Lenguaje claro para personas sin perfil técnico.
+
+- Coste cero: capa gratuita de la API de Gemini y despliegue gratuito (ruta A). El respaldo de pago (Claude) queda desactivado.
+- La clave de la API va en secretos, nunca en el código.
+- Sin datos personales reales.
+- Lenguaje sencillo, para alguien sin conocimientos técnicos.
+- Una sola llamada a la IA por mensaje del cliente, para cuidar la cuota.
+- La IA no puede prometer acciones que no ocurrieron.
 
 ## 7. Criterios de aceptación
-| # | Entrada / situación | Resultado esperado |
-|---|---|---|
-| 1 | "Desde esta mañana el bot de WhatsApp no responde a nadie" | Incidente, Crítica o Alta, Agentes e IA |
-| 2 | "Queremos que el asistente salude con el nombre del cliente" | Pedido de cambio, severidad Baja o Media |
-| 3 | "No anda." | Repregunta pidiendo qué falla, desde cuándo y un ejemplo |
-| 4 | Responde a la repregunta con los datos | Se reclasifica y se crea la solicitud con número |
-| 5 | **Caso límite:** el cliente no completa tras 3 repreguntas | Se registra igual, con el aviso "datos pendientes" |
-| 6 | **Caso límite:** mensaje de menos de 3 caracteres | Pide que escriba un poco más, sin llamar a la IA |
-| 7 | **Caso límite:** saludo o texto sin sentido ("hola") | Consulta / Baja, y pide que describa el problema |
-| 8 | **Error:** cuota de Gemini agotada (429) o modelo colgado | Responde el siguiente modelo y lo indica debajo del mensaje |
-| 11 | **Caso límite:** el cliente escribe mientras la IA responde | El chat queda bloqueado ("Esperá la respuesta…"), no se pierde nada |
-| 12 | Solicitud incompleta | La IA repregunta sin decir que ya la registró ni que la pasó al equipo |
-| 9 | **Error:** ningún modelo disponible o sin claves | Mensaje claro, el texto no se pierde y la app no se cae |
-| 10 | **Error:** el modelo devuelve algo que no es JSON | Mensaje "probá de nuevo", la app no se cae |
 
-## 8. Fuera de alcance
-- Crear el ticket real en Azure DevOps (vía MCP) y mostrar comentarios del equipo.
-- Login de clientes, adjuntos y persistencia entre sesiones.
-- Resolver la solicitud o asignarla a una persona concreta.
+La app está bien si:
+
+| Entrada | Resultado esperado |
+|---|---|
+| "Desde esta mañana el bot de WhatsApp no responde a nadie" | Incidente, Crítica o Alta, Agentes e IA |
+| "Queremos que el asistente salude con el nombre del cliente" | Pedido de cambio, severidad Baja o Media |
+| "No anda." | Repregunta qué falla y desde cuándo, sin decir que ya lo registró o derivó |
+| Responde a la repregunta con los datos | Reclasifica y muestra la ficha con número (solo en la sesión) |
+| Caso límite: "hola" o texto sin sentido | Saludo amable, no gasta repregunta ni crea ficha |
+| Caso límite: mensaje de menos de 3 caracteres | Pide que escriba más, sin llamar a la IA |
+| Caso límite: no completa tras 3 repreguntas | Muestra la ficha igual, con aviso de "datos pendientes" |
+| Caso límite: escribe mientras la IA responde | Chat bloqueado, no se pierde ningún mensaje |
+| Error: se acaba la cuota (429) o el modelo no responde en 12 s | Responde el siguiente modelo y lo indica bajo el mensaje |
+| Error: ningún modelo disponible o sin claves | "El asistente no está disponible en este momento… volvé a enviar el mensaje". La app no se cae |
+| Error: el modelo no devuelve JSON válido | "No pude entender la respuesta del clasificador. Probá de nuevo en unos segundos" |
+
+## 8. Fuera de alcance (por ahora)
+
+- Abrir el ticket en Azure DevOps (vía MCP) y mostrarle al cliente el estado y los comentarios del equipo.
+- Activar el respaldo con Claude (requiere una clave de pago de Anthropic).
+- Login de clientes, adjuntos e historial entre sesiones.
+- Asignar la solicitud a una persona concreta.
 
 ## 9. Despliegue
-Streamlit Community Cloud (ruta A) desde el repositorio público `marcosposn/my-app-streamlit`. Cada commit en `main` redespliega la app.
+
+- **Ruta:** A (Streamlit Community Cloud), desde el repositorio público `marcosposn/my-app-streamlit`. Cada commit en `main` redespliega la app.
+- **Si trabajáis en equipo (opcional):** trabajo individual.

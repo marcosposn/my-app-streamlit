@@ -1,34 +1,45 @@
 # AGENTS.md · Portal de solicitudes con IA
 
-## Qué es
-Portal donde un cliente (sin perfil técnico) describe un problema o un pedido de cambio. Un asistente con IA le pregunta los datos que faltan, clasifica la solicitud (tipo, severidad, equipo) y la registra.
+> Este fichero lo leen los agentes de programación antes de tocar el código. Para Claude, `CLAUDE.md` contiene una sola línea que remite aquí.
 
-## Stack
-- Python 3.12, **una sola pantalla en Streamlit** (`app.py`), desplegada en Streamlit Community Cloud desde este repo público.
-- IA: Gemini con el SDK `google-genai` (`gemini-3.5-flash-lite`, respaldo `gemini-3.8-flash`, timeout 12 s) y Claude con el SDK `anthropic` (`claude-haiku-4-5`) como último respaldo.
-- Toda llamada a un modelo pasa por **una sola función**, `consultar_ia(prompt)`, que devuelve `(texto, proveedor)`.
-- Memoria del chat en `st.session_state` (`mensajes`, `relato`, `rondas`, `ticket`, `pendiente`).
-- Mientras la IA responde, el `chat_input` queda deshabilitado (mensaje en `pendiente`).
-- Sin base de datos: el ticket vive en la sesión. La creación está aislada en `crear_ticket()`.
+## Qué es este proyecto
+
+Portal donde un cliente de una empresa de software, sin perfil técnico, cuenta un problema o un pedido de cambio con sus palabras; un asistente con IA le pregunta lo que falta y clasifica la solicitud por tipo, severidad y equipo.
+
+## Cómo está hecho
+
+- Python 3.12.
+- Interfaz: Streamlit (ruta A), una sola pantalla con chat (`st.chat_message`, `st.chat_input`) y memoria en `st.session_state` (`mensajes`, `relato`, `rondas`, `ticket`, `pendiente`).
+- IA: API de Gemini con el SDK `google-genai`. Los modelos están en la tupla del bucle de `consultar_ia()` en `app.py`: `gemini-3.5-flash-lite` (principal) y `gemini-3.8-flash` (respaldo), con timeout de 12 s. Tercer nivel preparado y no activado: Claude (`claude-haiku-4-5`, SDK `anthropic`), que solo se usa si existe `ANTHROPIC_API_KEY`.
+- Toda llamada a un modelo pasa por `consultar_ia(prompt)`, que devuelve `(texto, proveedor)`. El prompt está en la constante `PROMPT_CLASIFICACION`.
+- La solicitud vive solo en la sesión: no se abre en ninguna herramienta. La creación está aislada en `crear_ticket()`.
+- Archivos: `app.py` (toda la app), `requirements.txt` (dependencias), `README.md`, `especificacion.md` y `prompts.md` (registro de prompts).
+- La especificación completa está en [especificacion.md](especificacion.md).
 
 ## Reglas
-- Las claves (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`) **solo** en `st.secrets`. Nunca en el código, el README, los commits ni el chat.
-- Leer las claves con `leer_clave()`: la app no se puede romper si no hay secrets.
-- Cada llamada a la API va dentro de `try/except` y muestra al usuario un mensaje claro, **sin stack trace ni datos sensibles**.
-- El prompt de clasificación pide **solo JSON** con `tipo`, `severidad`, `equipo`, `resumen`, `faltantes`, `es_solicitud` y `mensaje_al_cliente`. Si se cambia el formato, actualizar también la interfaz.
-- Las repreguntas salen de `faltantes`, sin una llamada extra a la IA (para ahorrar cuota).
-- Máximo `MAX_RONDAS = 3` repreguntas: después se registra igual, marcada con datos pendientes.
-- Textos para el usuario en español rioplatense, cordiales y profesionales, cortos. La IA nunca dice que registró o derivó algo si faltan datos.
-- **Un cambio por pedido.** Explicar qué se cambió y por qué antes de tocar otra cosa.
 
-## Casos de prueba manuales
-1. Ejemplo **"Bot caído"** → Incidente, severidad Crítica o Alta, equipo Agentes e IA.
-2. Ejemplo **"Incompleta"** ("No anda.") → el asistente repregunta. Al responder "el bot de WhatsApp, desde ayer" → se crea la solicitud.
-3. **Clave de Gemini inválida** con la de Claude válida → responde igual y abajo dice "Clasificado con: Claude".
-4. **"hola"** → saludo amable, sin gastar repregunta.
-5. **Sin ninguna clave** → mensaje claro en el chat, sin error rojo de Streamlit.
+- La clave de la API va SIEMPRE en secretos (`st.secrets`) y se lee con `leer_clave()`, para que la app no se rompa si falta. Nunca en el código, en el README ni en el chat.
+- Cada llamada a la API va dentro de `try/except` y muestra un mensaje claro para el usuario, sin detalles técnicos.
+- El prompt devuelve SOLO JSON con `tipo`, `severidad`, `equipo`, `resumen`, `faltantes`, `es_solicitud` y `mensaje_al_cliente`. Si cambia el formato, actualizar también la interfaz.
+- Una sola llamada a la IA por mensaje: las repreguntas salen del mismo JSON. Máximo `MAX_RONDAS = 3` repreguntas.
+- La IA nunca dice que registró, revisó o derivó algo si faltan datos.
+- Textos de la interfaz en español rioplatense, cordiales, profesionales y sencillos, pensados para alguien sin conocimientos técnicos.
+- Cambios pequeños: uno por petición. Al terminar, explica qué has cambiado y por qué.
+- Si añades una librería, añádela también a `requirements.txt` y dilo.
+- No uses datos personales reales. Para probar, inventa ejemplos.
 
-## No hacer sin preguntar
-- Cambiar los modelos, agregar dependencias o una base de datos.
-- Conectar Azure DevOps u otro sistema externo.
-- Hacer push o redesplegar sin avisar.
+## Cómo comprobar que funciona
+
+- Ruta A: `streamlit run app.py` en local (con `.streamlit/secrets.toml`), o haz push y revisa la app en Streamlit Cloud. Debajo de cada respuesta se ve qué modelo respondió y cuánto tardó.
+- Casos de prueba (entrada → lo que esperamos):
+  1. Ejemplo "Bot caído" → Incidente, Crítica o Alta, Agentes e IA.
+  2. "No anda." → repregunta qué falla y desde cuándo; al responder "El bot de WhatsApp de ventas no responde desde ayer" → ficha completa, en ~1 s por respuesta.
+  3. "hola" (fuera de tema) → saludo amable que pide el problema, sin gastar repregunta.
+  4. App sin claves → mensaje claro en el chat, sin error rojo de Streamlit.
+
+## Qué no hacer
+
+- No borres ni reescribas el README sin preguntar.
+- No cambies el modelo ni la arquitectura sin preguntar.
+- No conectes Azure DevOps ni otro sistema externo sin preguntar.
+- No hagas push ni despliegues sin que yo lo haya revisado.
